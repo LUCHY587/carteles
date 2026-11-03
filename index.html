@@ -49,6 +49,14 @@ button.primary{background:var(--accent);color:var(--accent-ink);border-color:var
 .drop{position:relative;aspect-ratio:16/10;max-width:100%;border:1.5px dashed var(--line);border-radius:8px;display:grid;place-items:center;overflow:hidden;cursor:pointer;background:var(--field);font-size:12px;color:var(--muted);text-align:center}
 .drop.over{border-color:var(--accent)}
 .drop img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.slots{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.slot{flex:1 1 80px;padding:6px 8px;font-size:13px}
+.slot[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:6px;max-height:330px;overflow-y:auto}
+.gal button{position:relative;padding:0;aspect-ratio:4/3;overflow:hidden;border-radius:6px;border:2px solid transparent;background:var(--field)}
+.gal button img{width:100%;height:100%;object-fit:cover;display:block}
+.gal button.used{border-color:var(--accent)}
+.gal button b{position:absolute;top:3px;left:3px;background:var(--accent);color:var(--accent-ink);font-size:11px;line-height:1;padding:3px 5px;border-radius:4px}
 .drop span{position:relative;background:color-mix(in srgb,var(--panel) 80%,transparent);padding:2px 6px;border-radius:4px}
 .drop input{display:none}
 .preview{position:sticky;top:calc(env(safe-area-inset-top,0px) + 12px);display:flex;flex-direction:column;gap:12px;min-width:0}
@@ -117,6 +125,15 @@ button.primary{background:var(--accent);color:var(--accent-ink);border-color:var
       <label class="drop" id="d0"><span>Foto principal</span><input type="file" accept="image/*" id="f0"></label>
       <label class="drop" id="d1"><span>Foto 2</span><input type="file" accept="image/*" id="f1"></label>
       <label class="drop" id="d2"><span>Foto 3</span><input type="file" accept="image/*" id="f2"></label>
+    </div>
+    <div id="piuGal" hidden>
+      <p class="hint" style="margin-top:6px"><b>Fotos de PIU:</b> elegí qué lugar querés cambiar y tocá la foto.</p>
+      <div class="slots" role="radiogroup" aria-label="Lugar de la foto">
+        <button type="button" class="slot" data-slot="0" aria-pressed="true">Principal</button>
+        <button type="button" class="slot" data-slot="1" aria-pressed="false">Foto 2</button>
+        <button type="button" class="slot" data-slot="2" aria-pressed="false">Foto 3</button>
+      </div>
+      <div class="gal" id="galList"></div>
     </div>
   </section>
 
@@ -2540,7 +2557,7 @@ function showThumb(dropId, src){
   if(!src){ if(t) t.remove(); return; }
   if(!t){ t = document.createElement('img'); t.alt=''; d.prepend(t); } t.src = src;
 }
-[0,1,2].forEach(i => setupDrop('d'+i, 'f'+i, (im, src) => { photos[i] = im; showThumb('d'+i, src); changed(); }));
+[0,1,2].forEach(i => setupDrop('d'+i, 'f'+i, (im, src) => { photos[i] = im; showThumb('d'+i, src); slotSrc[i] = null; renderGallery(); changed(); }));
 setupDrop('dLogo','fLogo', (im, src) => {
   // shrink logo before storing
   const c = document.createElement('canvas'); const sc = Math.min(1, 900/im.width);
@@ -2593,7 +2610,7 @@ $('btnParse').onclick = () => {
 };
 $('btnNew').onclick = () => {
   S = {title:'', op:'Venta', cur:'USD', price:'', address:'', url:'', desc:'', feats:[]};
-  photos = [null,null,null]; [0,1,2].forEach(i => showThumb('d'+i, null));
+  photos = [null,null,null]; [0,1,2].forEach(i => showThumb('d'+i, null)); piuPhotos = []; slotSrc = [null,null,null]; renderGallery();
   $('paste').value=''; $('parseMsg').textContent=''; fillForm(); changed();
 };
 
@@ -2735,6 +2752,29 @@ function piuHandshake(){
   const m = $('piuMsg'); m.hidden = false; m.textContent = 'Recibiendo la propiedad desde PIU…';
 }
 let piuDone = false;
+let piuPhotos = [], slotSrc = [null,null,null], activeSlot = 0;
+async function assignPhoto(slot, idx){
+  const ph = piuPhotos[idx]; if(!ph) return;
+  try{ if(!ph.img) ph.img = await imgFrom(ph.src); }catch(e){ return; }
+  photos[slot] = ph.img; slotSrc[slot] = idx; showThumb('d'+slot, ph.src);
+}
+function setSlot(n){
+  activeSlot = n;
+  document.querySelectorAll('.slot').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.slot) === n)));
+}
+function renderGallery(){
+  const box = $('galList'); box.innerHTML = '';
+  $('piuGal').hidden = piuPhotos.length === 0;
+  piuPhotos.forEach((ph, idx) => {
+    const b = document.createElement('button'); b.type = 'button'; b.setAttribute('aria-label', 'Foto ' + (idx+1) + ' de PIU');
+    const im = document.createElement('img'); im.src = ph.src; im.alt = ''; im.loading = 'lazy'; b.appendChild(im);
+    const used = slotSrc.indexOf(idx);
+    if(used >= 0){ b.classList.add('used'); const t = document.createElement('b'); t.textContent = used === 0 ? 'Principal' : String(used+1); b.appendChild(t); }
+    b.onclick = async () => { await assignPhoto(activeSlot, idx); setSlot((activeSlot+1) % 3); renderGallery(); changed(); };
+    box.appendChild(b);
+  });
+}
+document.querySelectorAll('.slot').forEach(b => b.onclick = () => setSlot(Number(b.dataset.slot)));
 async function onPiu(e){
   if(e.origin !== PIU_ORIGIN || !e.data || e.data.type !== 'piu-cartel' || piuDone) return;
   piuDone = true; const p = e.data;
@@ -2754,10 +2794,10 @@ async function onPiu(e){
   if(otherAgency){ F.agency = p.agencia; F.contact = p.whatsapp ? 'Consultas: ' + p.whatsapp : ''; }
   const usePiuLogo = p.logo && (otherAgency || !load('mmf_logo'));
   fillForm();
-  photos = [null,null,null];
-  for(let i=0;i<3;i++){ const b = p.photos && p.photos[i];
-    if(b){ const src = URL.createObjectURL(b); try{ photos[i] = await imgFrom(src); showThumb('d'+i, src); }catch(err){ showThumb('d'+i, null); } }
-    else showThumb('d'+i, null); }
+  photos = [null,null,null]; slotSrc = [null,null,null];
+  piuPhotos = (p.photos || []).filter(Boolean).map(b => ({src: URL.createObjectURL(b), img: null}));
+  for(let i=0;i<3;i++){ if(piuPhotos[i]) await assignPhoto(i, i); else showThumb('d'+i, null); }
+  renderGallery();
   if(usePiuLogo){ const src = URL.createObjectURL(p.logo); try{ logo = await imgFrom(src); showThumb('dLogo', src); }catch(err){} }
   $('piuMsg').textContent = 'Propiedad cargada desde PIU. Revisá los datos y descargá el cartel.';
   changed(); draw();
